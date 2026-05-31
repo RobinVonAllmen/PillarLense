@@ -20,6 +20,12 @@ A Python virtual environment should be created locally as `.venv`. Virtual envir
 ./scripts/setup_venv.sh
 ```
 
+On Windows, run this from Command Prompt or PowerShell in the repository root:
+
+```bat
+scripts\setup_venv.bat
+```
+
 The script creates `.venv`, upgrades `pip/setuptools/wheel`, and installs PillarLense plus the required packages from `pyproject.toml`/`requirements.txt`:
 
 - `PyQt6`
@@ -33,15 +39,28 @@ If your system uses a specific Python executable, pass it with `PYTHON`, for exa
 PYTHON=python3.11 ./scripts/setup_venv.sh
 ```
 
+On Windows Command Prompt, the equivalent is:
+
+```bat
+set PYTHON=C:\Path\To\python.exe
+scripts\setup_venv.bat
+```
+
 ## How to open the desktop app
 
-After setup, the simplest command is:
+After setup, the simplest macOS/Linux command is:
 
 ```bash
 ./scripts/run_app.sh
 ```
 
-Equivalent commands are:
+On Windows, run this from Command Prompt or PowerShell in the repository root:
+
+```bat
+scripts\run_app.bat
+```
+
+Equivalent macOS/Linux commands are:
 
 ```bash
 .venv/bin/pillar-lense
@@ -54,10 +73,35 @@ source .venv/bin/activate
 pillar-lense
 ```
 
+Equivalent Windows commands are:
+
+```bat
+.venv\Scripts\pillar-lense.exe
+```
+
+or:
+
+```bat
+.venv\Scripts\activate
+pillar-lense
+```
+
 You can also run the module directly from an activated environment:
 
 ```bash
 python -m pillar_lense.app
+```
+
+If you run the file directly, this is now supported too:
+
+```bash
+python pillar_lense/app.py
+```
+
+On Windows, the same direct-file launch is:
+
+```bat
+python pillar_lense\app.py
 ```
 
 ## Practical workflow

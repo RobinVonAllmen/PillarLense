@@ -34,8 +34,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .models import HSBThreshold, ProcessingSettings
-from .processing import BatchOutput, detect_squares, make_mask_panel, process_batch, read_rgb
+if __package__ in {None, ""}:
+    # Support launching this file directly, e.g. `python pillar_lense/app.py`.
+    # In that mode Python does not know the package parent, so add the
+    # repository root before importing package modules.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from pillar_lense.models import HSBThreshold, ProcessingSettings
+    from pillar_lense.processing import BatchOutput, detect_squares, make_mask_panel, process_batch, read_rgb
+else:
+    from .models import HSBThreshold, ProcessingSettings
+    from .processing import BatchOutput, detect_squares, make_mask_panel, process_batch, read_rgb
 
 
 def rgb_to_qpixmap(image) -> QPixmap:
