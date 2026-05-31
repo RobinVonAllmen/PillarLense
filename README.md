@@ -12,21 +12,49 @@ The application implements the same major stages as the macro:
 4. **Batch process image folders** by detecting pink squares, matching them to the user-defined layout, cropping each square, detecting caterpillars, measuring area in pixels and mm², and saving annotated mask PNG files.
 5. **Export `AreaMeasurements.csv`** with image name, square index, object index, area, scale, centroid coordinates, optional weight estimate, and the successful detection attempt.
 
-## Installation
+## Installation / virtual environment
+
+A Python virtual environment should be created locally as `.venv`. Virtual environments contain many platform-specific binaries, so the repository includes a repeatable setup script instead of committing the generated `.venv` folder.
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+./scripts/setup_venv.sh
 ```
 
-## Run the desktop app
+The script creates `.venv`, upgrades `pip/setuptools/wheel`, and installs PillarLense plus the required packages from `pyproject.toml`/`requirements.txt`:
+
+- `PyQt6`
+- `opencv-python`
+- `numpy`
+- `pandas`
+
+If your system uses a specific Python executable, pass it with `PYTHON`, for example:
 
 ```bash
+PYTHON=python3.11 ./scripts/setup_venv.sh
+```
+
+## How to open the desktop app
+
+After setup, the simplest command is:
+
+```bash
+./scripts/run_app.sh
+```
+
+Equivalent commands are:
+
+```bash
+.venv/bin/pillar-lense
+```
+
+or:
+
+```bash
+source .venv/bin/activate
 pillar-lense
 ```
 
-Or:
+You can also run the module directly from an activated environment:
 
 ```bash
 python -m pillar_lense.app

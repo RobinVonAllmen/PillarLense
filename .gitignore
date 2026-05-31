@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+# Local virtual environment created by scripts/setup_venv.sh
 .venv/
 build/
 dist/
