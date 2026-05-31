@@ -111,7 +111,7 @@ python pillar_lense\app.py
 3. Enter the known line length in millimetres. The app displays the computed `mm/px` scale.
 4. Click **Add square centers** and click each expected square center in the desired order. Press **Backspace** or **Delete** to remove the most recent point.
 5. Adjust HSB and particle settings in the **Thresholds** tab. The pink-square area defaults (`6-7 mm²`) are physical square areas from the macro and are converted to pixel area using your drawn scale; they are not caterpillar pixel-area limits.
-6. Use **Preview pink-square mask** to inspect Hue, Saturation, Brightness, and the cleaned final mask after dilate/close/fill-holes/erode. Draw the scale line before previewing if you want the `6-7 mm²` square-area filter applied; without a scale, the preview shows the cleaned mask without square-area filtering.
+6. Use **Preview pink-square mask** to inspect Hue, Saturation, Brightness, and the cleaned final mask after dilate/close/fill-holes/erode. The preview is scaled to fit your screen, with the original panel dimensions shown below it. Draw the scale line before previewing if you want the `6-7 mm²` square-area filter applied; without a scale, the preview shows the cleaned mask without square-area filtering.
 7. Choose input and output folders, then click **Run batch analysis**.
 
 ## Outputs

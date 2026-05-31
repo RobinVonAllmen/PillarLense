@@ -391,13 +391,33 @@ class MainWindow(QMainWindow):
         scale = self.computed_scale()
         squares, masks = detect_squares(self.current_rgb, settings, scale)
         panel = make_mask_panel(masks)
+        panel_pixmap = rgb_to_qpixmap(panel)
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else self.geometry()
+        max_width = max(400, int(available.width() * 0.85))
+        max_height = max(300, int(available.height() * 0.85))
+        preview_pixmap = panel_pixmap.scaled(
+            max_width,
+            max_height,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
         dialog = QDialog(self)
         dialog.setWindowTitle("Pink-square threshold preview")
         dialog_layout = QVBoxLayout(dialog)
         preview_label = QLabel()
-        preview_label.setPixmap(rgb_to_qpixmap(panel))
+        preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview_label.setPixmap(preview_pixmap)
         dialog_layout.addWidget(preview_label)
-        dialog.resize(min(panel.shape[1], 1400), min(panel.shape[0], 900))
+        scale_percent = preview_pixmap.width() / panel_pixmap.width() * 100 if panel_pixmap.width() else 100
+        dialog_layout.addWidget(
+            QLabel(
+                f"Preview scaled to {scale_percent:.0f}% to fit on screen "
+                f"(original panel: {panel_pixmap.width()}×{panel_pixmap.height()} px)."
+            )
+        )
+        dialog.resize(preview_pixmap.width() + 40, preview_pixmap.height() + 90)
         dialog.exec()
         if scale is None:
             area_note = "no scale drawn yet; square area filtering disabled for this preview"
