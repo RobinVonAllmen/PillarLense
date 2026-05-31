@@ -11,6 +11,7 @@ from PyQt6.QtGui import QAction, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -251,15 +252,15 @@ class MainWindow(QMainWindow):
 
         particle_box = QGroupBox("Particle filters")
         form = QFormLayout(particle_box)
-        self.square_min = self._double_spin(self.settings.square_area_min_px, 0, 1_000_000)
-        self.square_max = self._double_spin(self.settings.square_area_max_px, 0, 1_000_000)
+        self.square_min = self._double_spin(self.settings.square_area_min_mm2, 0, 1_000_000)
+        self.square_max = self._double_spin(self.settings.square_area_max_mm2, 0, 1_000_000)
         self.cat_min = self._double_spin(self.settings.caterpillar_area_min_px, 0, 1_000_000)
         self.cat_max = self._double_spin(self.settings.caterpillar_area_max_px, 0, 1_000_000)
         self.cat_low = self._spin(self.settings.caterpillar_threshold_low)
         self.cat_high = self._spin(self.settings.caterpillar_threshold_high)
         self.cat_retry_high = self._spin(self.settings.caterpillar_retry_threshold_high)
-        form.addRow("Pink square area min px²", self.square_min)
-        form.addRow("Pink square area max px²", self.square_max)
+        form.addRow("Pink square area min mm²", self.square_min)
+        form.addRow("Pink square area max mm²", self.square_max)
         form.addRow("Caterpillar area min px²", self.cat_min)
         form.addRow("Caterpillar area max px²", self.cat_max)
         form.addRow("Caterpillar gray low", self.cat_low)
@@ -324,8 +325,8 @@ class MainWindow(QMainWindow):
             hue=HSBThreshold(self.h_min.value(), self.h_max.value(), self.h_inv.isChecked()),
             saturation=HSBThreshold(self.s_min.value(), self.s_max.value(), self.s_inv.isChecked()),
             brightness=HSBThreshold(self.b_min.value(), self.b_max.value(), self.b_inv.isChecked()),
-            square_area_min_px=self.square_min.value(),
-            square_area_max_px=self.square_max.value(),
+            square_area_min_mm2=self.square_min.value(),
+            square_area_max_mm2=self.square_max.value(),
             caterpillar_area_min_px=self.cat_min.value(),
             caterpillar_area_max_px=self.cat_max.value(),
             caterpillar_threshold_low=self.cat_low.value(),
@@ -345,8 +346,8 @@ class MainWindow(QMainWindow):
         self.b_min.setValue(settings.brightness.minimum)
         self.b_max.setValue(settings.brightness.maximum)
         self.b_inv.setChecked(settings.brightness.invert)
-        self.square_min.setValue(settings.square_area_min_px)
-        self.square_max.setValue(settings.square_area_max_px)
+        self.square_min.setValue(settings.square_area_min_mm2)
+        self.square_max.setValue(settings.square_area_max_mm2)
         self.cat_min.setValue(settings.caterpillar_area_min_px)
         self.cat_max.setValue(settings.caterpillar_area_max_px)
         self.cat_low.setValue(settings.caterpillar_threshold_low)
@@ -387,10 +388,26 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "No image", "Open a reference image first.")
             return
         settings = self.collect_settings()
-        squares, masks = detect_squares(self.current_rgb, settings)
+        scale = self.computed_scale()
+        squares, masks = detect_squares(self.current_rgb, settings, scale)
         panel = make_mask_panel(masks)
-        self.canvas.set_pixmap(rgb_to_qpixmap(panel))
-        self.log.append(f"Preview found {len(squares)} pink-square candidate(s). Reopen the reference image before editing points again.")
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Pink-square threshold preview")
+        dialog_layout = QVBoxLayout(dialog)
+        preview_label = QLabel()
+        preview_label.setPixmap(rgb_to_qpixmap(panel))
+        dialog_layout.addWidget(preview_label)
+        dialog.resize(min(panel.shape[1], 1400), min(panel.shape[0], 900))
+        dialog.exec()
+        if scale is None:
+            area_note = "no scale drawn yet; square area filtering disabled for this preview"
+        else:
+            min_px = settings.square_area_min_mm2 / (scale**2)
+            max_px = settings.square_area_max_mm2 / (scale**2)
+            area_note = f"square area filter {min_px:.0f}-{max_px:.0f} px² from {settings.square_area_min_mm2:g}-{settings.square_area_max_mm2:g} mm²"
+        self.log.append(
+            f"Preview found {len(squares)} pink-square candidate(s) after dilate/close/fill holes/erode ({area_note})."
+        )
 
     def run_batch(self) -> None:
         scale = self.computed_scale()

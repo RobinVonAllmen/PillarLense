@@ -110,8 +110,8 @@ python pillar_lense\app.py
 2. Click **Draw scale line** and click twice on the image to mark a straight line of known length.
 3. Enter the known line length in millimetres. The app displays the computed `mm/px` scale.
 4. Click **Add square centers** and click each expected square center in the desired order. Press **Backspace** or **Delete** to remove the most recent point.
-5. Adjust HSB and particle settings in the **Thresholds** tab. The defaults mirror the macro, but the pink-square area limits are often the first values to adapt to your camera resolution.
-6. Use **Preview pink-square mask** to inspect Hue, Saturation, Brightness, and final HSB masks.
+5. Adjust HSB and particle settings in the **Thresholds** tab. The pink-square area defaults (`6-7 mm²`) are physical square areas from the macro and are converted to pixel area using your drawn scale; they are not caterpillar pixel-area limits.
+6. Use **Preview pink-square mask** to inspect Hue, Saturation, Brightness, and the cleaned final mask after dilate/close/fill-holes/erode. Draw the scale line before previewing if you want the `6-7 mm²` square-area filter applied; without a scale, the preview shows the cleaned mask without square-area filtering.
 7. Choose input and output folders, then click **Run batch analysis**.
 
 ## Outputs
@@ -120,7 +120,7 @@ The output folder contains:
 
 - `AreaMeasurements.csv` with one row per detected caterpillar object.
 - `<image>_sq<index>_mask.png` annotated crop overlays for each processed square.
-- `debug/<image>_threshold_panel.png` HSB threshold panels when debug-mask saving is enabled.
+- `debug/<image>_threshold_panel.png` HSB threshold panels when debug-mask saving is enabled. The fourth panel is the cleaned final pink-square mask after morphology, not the raw AND mask.
 
 ## Optional weight estimation
 

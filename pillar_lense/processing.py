@@ -121,13 +121,33 @@ def analyze_particles(
     return sorted(particles, key=lambda item: (item.bbox[1], item.bbox[0]))
 
 
-def detect_squares(rgb: np.ndarray, settings: ProcessingSettings) -> tuple[list[Particle], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+def square_area_limits_px(settings: ProcessingSettings, scale_mm_per_px: float | None) -> tuple[float, float]:
+    """Convert pink-square area limits from mm² to px².
+
+    The FIJI macro used `size=6-7` for pink-square particles. Those values
+    are intended to be real-world square areas, not caterpillar-sized pixel
+    areas. When no scale is available (for example, a quick threshold preview
+    before drawing the scale line), the preview should still show the cleaned
+    mask, so particle area filtering is disabled.
+    """
+    if scale_mm_per_px is None or scale_mm_per_px <= 0:
+        return 0.0, float("inf")
+    px_per_mm2 = 1.0 / (scale_mm_per_px**2)
+    return settings.square_area_min_mm2 * px_per_mm2, settings.square_area_max_mm2 * px_per_mm2
+
+
+def detect_squares(
+    rgb: np.ndarray,
+    settings: ProcessingSettings,
+    scale_mm_per_px: float | None = None,
+) -> tuple[list[Particle], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     masks = hsb_masks(rgb, settings)
     cleaned = clean_square_mask(masks[-1])
+    square_area_min_px, square_area_max_px = square_area_limits_px(settings, scale_mm_per_px)
     particles = analyze_particles(
         cleaned,
-        settings.square_area_min_px,
-        settings.square_area_max_px,
+        square_area_min_px,
+        square_area_max_px,
         settings.square_circularity_min,
         settings.square_circularity_max,
     )
@@ -205,7 +225,7 @@ def annotate_crop(crop_rgb: np.ndarray, mask: np.ndarray, area_mm2: float | None
 
 
 def make_mask_panel(masks: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
-    labels = ["Hue mask", "Saturation mask", "Brightness mask", "Final HSB mask"]
+    labels = ["Hue mask", "Saturation mask", "Brightness mask", "Cleaned final mask"]
     panels = [cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) for mask in masks]
     h, w = masks[0].shape[:2]
     canvas = np.zeros((h * 2, w * 2, 3), np.uint8)
@@ -226,8 +246,12 @@ def process_image(
     image_path = Path(image_path)
     output_dir = Path(output_dir)
     rgb = read_rgb(image_path)
-    squares, masks = detect_squares(rgb, settings)
+    squares, masks = detect_squares(rgb, settings, scale_mm_per_px)
     warnings: list[str] = []
+
+    if settings.save_debug_masks:
+        write_rgb(output_dir / "debug" / f"{image_path.stem}_threshold_panel.png", make_mask_panel(masks))
+
     if not squares:
         warnings.append(f"No pink squares found in {image_path.name}")
         return [], warnings
@@ -236,9 +260,6 @@ def process_image(
     except ValueError as exc:
         warnings.append(f"{image_path.name}: {exc}")
         return [], warnings
-
-    if settings.save_debug_masks:
-        write_rgb(output_dir / "debug" / f"{image_path.stem}_threshold_panel.png", make_mask_panel(masks))
 
     results: list[DetectionResult] = []
     for square in matched:

@@ -22,11 +22,13 @@ def test_detect_squares_and_match_layout_with_imagej_style_hsb_thresholds():
         hue=HSBThreshold(12, 200, True),
         saturation=HSBThreshold(40, 255, False),
         brightness=HSBThreshold(1, 255, False),
-        square_area_min_px=1_000,
-        square_area_max_px=4_000,
+        square_area_min_mm2=5.0,
+        square_area_max_mm2=8.0,
     )
 
-    squares, _ = detect_squares(image, settings)
+    # The pink-square limits are physical areas. With 0.05 mm/px,
+    # a 5-8 mm² square corresponds to roughly 2,000-3,200 px².
+    squares, _ = detect_squares(image, settings, scale_mm_per_px=0.05)
     matched = match_squares_to_layout(squares, [(55, 50)])
 
     assert len(matched) == 1

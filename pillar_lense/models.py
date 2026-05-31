@@ -23,8 +23,8 @@ class ProcessingSettings:
     hue: HSBThreshold = field(default_factory=lambda: HSBThreshold(12, 200, True))
     saturation: HSBThreshold = field(default_factory=lambda: HSBThreshold(40, 80, False))
     brightness: HSBThreshold = field(default_factory=lambda: HSBThreshold(0, 255, False))
-    square_area_min_px: float = 6.0
-    square_area_max_px: float = 7.0
+    square_area_min_mm2: float = 6.0
+    square_area_max_mm2: float = 7.0
     square_circularity_min: float = 0.0
     square_circularity_max: float = 1.0
     caterpillar_area_min_px: float = 300.0
@@ -44,6 +44,13 @@ class ProcessingSettings:
     @classmethod
     def from_json(cls, path: str | Path) -> "ProcessingSettings":
         raw: dict[str, Any] = json.loads(Path(path).read_text(encoding="utf-8"))
+        # Older settings files used misleading `_px` names for pink-square
+        # filters. Those ImageJ macro defaults are physical square areas
+        # (roughly 6-7 mm²), so migrate them on load.
+        if "square_area_min_px" in raw and "square_area_min_mm2" not in raw:
+            raw["square_area_min_mm2"] = raw.pop("square_area_min_px")
+        if "square_area_max_px" in raw and "square_area_max_mm2" not in raw:
+            raw["square_area_max_mm2"] = raw.pop("square_area_max_px")
         for key in ("hue", "saturation", "brightness"):
             if isinstance(raw.get(key), dict):
                 raw[key] = HSBThreshold(**raw[key])
