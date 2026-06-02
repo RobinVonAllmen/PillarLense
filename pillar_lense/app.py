@@ -485,7 +485,7 @@ class MainWindow(QMainWindow):
         settings = self.collect_settings()
         scale = self.computed_scale()
         squares, masks = detect_squares(self.current_rgb, settings, scale)
-        panel = make_mask_panel(masks)
+        panel = make_mask_panel(masks, self.current_rgb, squares)
         panel_pixmap = rgb_to_qpixmap(panel)
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else self.geometry()

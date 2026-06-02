@@ -100,3 +100,34 @@ def test_hsb_thresholds_from_region_represents_wrapping_hues_with_inversion():
     assert hue.invert
     assert hue.minimum > 0
     assert hue.maximum < 255
+
+
+def test_make_mask_panel_overlays_detected_square_particles_on_lower_right_quadrant():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.models import HSBThreshold, ProcessingSettings
+    from pillar_lense.processing import detect_squares, make_mask_panel
+
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    image[25:75, 30:80] = [255, 0, 255]
+    image[90:95, 90:95] = [255, 0, 255]
+    settings = ProcessingSettings(
+        hue=HSBThreshold(12, 200, True),
+        saturation=HSBThreshold(40, 255, False),
+        brightness=HSBThreshold(1, 255, False),
+        square_area_min_mm2=5.0,
+        square_area_max_mm2=8.0,
+    )
+
+    squares, masks = detect_squares(image, settings, scale_mm_per_px=0.05)
+    panel = make_mask_panel(masks, image, squares)
+
+    h, w = image.shape[:2]
+    highlighted_square_pixel = panel[h + 50, w + 55]
+    rejected_speck_pixel = panel[h + 92, w + 92]
+
+    assert len(squares) == 1
+    assert highlighted_square_pixel[1] > highlighted_square_pixel[0]
+    assert highlighted_square_pixel[2] > highlighted_square_pixel[0]
+    assert rejected_speck_pixel.tolist() == image[92, 92].tolist()

@@ -275,9 +275,50 @@ def annotate_crop(crop_rgb: np.ndarray, mask: np.ndarray, area_mm2: float | None
     return overlay
 
 
-def make_mask_panel(masks: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]) -> np.ndarray:
-    labels = ["Hue mask", "Saturation mask", "Brightness mask", "Cleaned final mask"]
-    panels = [cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) for mask in masks]
+def particle_mask(particles: Iterable[Particle], shape: tuple[int, int]) -> np.ndarray:
+    """Return one binary mask containing the particles that passed square filtering."""
+    combined = np.zeros(shape, np.uint8)
+    for particle in particles:
+        combined = cv2.bitwise_or(combined, particle.mask)
+    return combined
+
+
+def overlay_mask(
+    rgb: np.ndarray,
+    mask: np.ndarray,
+    color: tuple[int, int, int] = (0, 255, 255),
+    alpha: float = 0.45,
+) -> np.ndarray:
+    """Blend a binary mask over an RGB image in a high-contrast color."""
+    overlay = rgb.copy()
+    color_image = np.zeros_like(overlay)
+    color_image[:, :] = color
+    foreground = mask > 0
+    overlay[foreground] = (overlay[foreground] * (1 - alpha) + color_image[foreground] * alpha).astype(np.uint8)
+    return overlay
+
+
+def make_mask_panel(
+    masks: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    rgb: np.ndarray | None = None,
+    square_particles: Iterable[Particle] | None = None,
+) -> np.ndarray:
+    """Build a 2×2 threshold panel with the lower-right quadrant showing square locations."""
+    hue_mask, saturation_mask, brightness_mask, cleaned_mask = masks
+    panels = [
+        cv2.cvtColor(hue_mask, cv2.COLOR_GRAY2RGB),
+        cv2.cvtColor(saturation_mask, cv2.COLOR_GRAY2RGB),
+        cv2.cvtColor(brightness_mask, cv2.COLOR_GRAY2RGB),
+    ]
+    labels = ["Hue mask", "Saturation mask", "Brightness mask"]
+    if rgb is None:
+        panels.append(cv2.cvtColor(cleaned_mask, cv2.COLOR_GRAY2RGB))
+        labels.append("Cleaned final mask")
+    else:
+        overlay_source = cleaned_mask if square_particles is None else particle_mask(square_particles, cleaned_mask.shape)
+        panels.append(overlay_mask(rgb, overlay_source))
+        labels.append("Detected square overlay")
+
     h, w = masks[0].shape[:2]
     canvas = np.zeros((h * 2, w * 2, 3), np.uint8)
     positions = [(0, 0), (w, 0), (0, h), (w, h)]
@@ -301,7 +342,7 @@ def process_image(
     warnings: list[str] = []
 
     if settings.save_debug_masks:
-        write_rgb(output_dir / "debug" / f"{image_path.stem}_threshold_panel.png", make_mask_panel(masks))
+        write_rgb(output_dir / "debug" / f"{image_path.stem}_threshold_panel.png", make_mask_panel(masks, rgb, squares))
 
     if not squares:
         warnings.append(f"No pink squares found in {image_path.name}")
