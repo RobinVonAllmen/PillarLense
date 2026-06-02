@@ -25,7 +25,6 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -69,7 +68,46 @@ def rgb_to_qpixmap(image) -> QPixmap:
     return QPixmap.fromImage(qimage)
 
 
-class ImageCanvas(QGraphicsView):
+class ZoomablePixmapView(QGraphicsView):
+    """Graphics view with mouse-wheel/touchpad zoom and drag panning."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setScene(QGraphicsScene(self))
+        self.pixmap_item: QGraphicsPixmapItem | None = None
+        self._zoom_steps = 0
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+    def set_pixmap(self, pixmap: QPixmap) -> None:
+        self.scene().clear()
+        self.pixmap_item = self.scene().addPixmap(pixmap)
+        self.setSceneRect(self.pixmap_item.boundingRect())
+        self._zoom_steps = 0
+        self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
+    def wheelEvent(self, event) -> None:
+        if self.pixmap_item is None:
+            super().wheelEvent(event)
+            return
+        delta = event.angleDelta().y() or event.pixelDelta().y()
+        if delta == 0:
+            super().wheelEvent(event)
+            return
+        factor = 1.25 if delta > 0 else 0.8
+        self._zoom_steps += 1 if delta > 0 else -1
+        if self._zoom_steps < -10:
+            self._zoom_steps = -10
+            return
+        self.scale(factor, factor)
+        event.accept()
+
+
+class ImageCanvas(ZoomablePixmapView):
     """Interactive image widget supporting annotation and pipette rectangle sampling."""
 
     changed = pyqtSignal()
@@ -77,29 +115,20 @@ class ImageCanvas(QGraphicsView):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setScene(QGraphicsScene(self))
-        self.pixmap_item: QGraphicsPixmapItem | None = None
         self.mode = "view"
         self.scale_line: tuple[QPointF, QPointF] | None = None
         self.layout_points: list[QPointF] = []
         self._pending_line_start: QPointF | None = None
         self._pipette_start: QPointF | None = None
         self._pipette_current: QPointF | None = None
-        self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
-        self.scene().clear()
-        self.pixmap_item = self.scene().addPixmap(pixmap)
-        self.setSceneRect(self.pixmap_item.boundingRect())
+        super().set_pixmap(pixmap)
         self.scale_line = None
         self.layout_points = []
         self._pending_line_start = None
         self._pipette_start = None
         self._pipette_current = None
-        self.resetTransform()
         self.changed.emit()
 
     def set_mode(self, mode: str) -> None:
@@ -465,17 +494,13 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Pink-square threshold preview")
         dialog_layout = QVBoxLayout(dialog)
-        preview_label = QLabel()
-        preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview_label.setPixmap(panel_pixmap)
-        preview_label.adjustSize()
-        scroll_area = QScrollArea()
-        scroll_area.setWidget(preview_label)
-        scroll_area.setWidgetResizable(False)
-        dialog_layout.addWidget(scroll_area)
+        preview_view = ZoomablePixmapView()
+        preview_view.set_pixmap(panel_pixmap)
+        dialog_layout.addWidget(preview_view)
         dialog_layout.addWidget(
             QLabel(
-                f"Scrollable preview at 100% "
+                "Use the mouse wheel or two-finger touchpad gesture to zoom; "
+                "drag to pan "
                 f"(panel: {panel_pixmap.width()}×{panel_pixmap.height()} px)."
             )
         )
