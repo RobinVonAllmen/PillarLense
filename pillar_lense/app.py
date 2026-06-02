@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-from PyQt6.QtCore import QPointF, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QPointF, QRectF, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QImage, QMouseEvent, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -41,10 +42,24 @@ if __package__ in {None, ""}:
     # repository root before importing package modules.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from pillar_lense.models import HSBThreshold, ProcessingSettings
-    from pillar_lense.processing import BatchOutput, detect_squares, make_mask_panel, process_batch, read_rgb
+    from pillar_lense.processing import (
+        BatchOutput,
+        detect_squares,
+        hsb_thresholds_from_region,
+        make_mask_panel,
+        process_batch,
+        read_rgb,
+    )
 else:
     from .models import HSBThreshold, ProcessingSettings
-    from .processing import BatchOutput, detect_squares, make_mask_panel, process_batch, read_rgb
+    from .processing import (
+        BatchOutput,
+        detect_squares,
+        hsb_thresholds_from_region,
+        make_mask_panel,
+        process_batch,
+        read_rgb,
+    )
 
 
 def rgb_to_qpixmap(image) -> QPixmap:
@@ -55,9 +70,10 @@ def rgb_to_qpixmap(image) -> QPixmap:
 
 
 class ImageCanvas(QGraphicsView):
-    """Small interactive image widget supporting scale-line and layout-point annotation."""
+    """Interactive image widget supporting annotation and pipette rectangle sampling."""
 
     changed = pyqtSignal()
+    pipette_selected = pyqtSignal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -67,8 +83,12 @@ class ImageCanvas(QGraphicsView):
         self.scale_line: tuple[QPointF, QPointF] | None = None
         self.layout_points: list[QPointF] = []
         self._pending_line_start: QPointF | None = None
+        self._pipette_start: QPointF | None = None
+        self._pipette_current: QPointF | None = None
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         self.scene().clear()
@@ -77,12 +97,20 @@ class ImageCanvas(QGraphicsView):
         self.scale_line = None
         self.layout_points = []
         self._pending_line_start = None
-        self.fitInView(self.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self._pipette_start = None
+        self._pipette_current = None
+        self.resetTransform()
         self.changed.emit()
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
-        self.setDragMode(QGraphicsView.DragMode.NoDrag if mode in {"scale", "layout"} else QGraphicsView.DragMode.ScrollHandDrag)
+        self._pipette_start = None
+        self._pipette_current = None
+        if mode in {"scale", "layout", "pipette"}:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
+        else:
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.viewport().update()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if self.pixmap_item is None or event.button() != Qt.MouseButton.LeftButton:
@@ -105,7 +133,35 @@ class ImageCanvas(QGraphicsView):
             self.changed.emit()
             self.viewport().update()
             return
+        if self.mode == "pipette":
+            self._pipette_start = point
+            self._pipette_current = point
+            self.viewport().update()
+            return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self.mode == "pipette" and self._pipette_start is not None:
+            self._pipette_current = self.mapToScene(event.position().toPoint())
+            self.viewport().update()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if (
+            self.mode == "pipette"
+            and event.button() == Qt.MouseButton.LeftButton
+            and self._pipette_start is not None
+        ):
+            end = self.mapToScene(event.position().toPoint())
+            rect = QRectF(self._pipette_start, end).normalized().intersected(self.sceneRect())
+            self._pipette_start = None
+            self._pipette_current = None
+            self.viewport().update()
+            if rect.width() >= 1 and rect.height() >= 1:
+                self.pipette_selected.emit(rect)
+            return
+        super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete) and self.mode == "layout" and self.layout_points:
@@ -124,6 +180,11 @@ class ImageCanvas(QGraphicsView):
         for idx, point in enumerate(self.layout_points, start=1):
             painter.drawEllipse(point, 7, 7)
             painter.drawText(point + QPointF(9, -9), str(idx))
+        if self._pipette_start is not None and self._pipette_current is not None:
+            pen = QPen(Qt.GlobalColor.green, 2)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.drawRect(QRectF(self._pipette_start, self._pipette_current).normalized())
 
     def scale_length_px(self) -> float | None:
         if not self.scale_line:
@@ -177,9 +238,11 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         splitter = QSplitter()
         self.canvas = ImageCanvas()
+        self.canvas.pipette_selected.connect(self.apply_pipette_thresholds)
         splitter.addWidget(self.canvas)
 
         right = QTabWidget()
+        self.tabs = right
         right.addTab(self._workflow_tab(), "Workflow")
         right.addTab(self._threshold_tab(), "Thresholds")
         right.addTab(self._results_tab(), "Results")
@@ -200,10 +263,13 @@ class MainWindow(QMainWindow):
         scale_mode.clicked.connect(lambda: self.canvas.set_mode("scale"))
         layout_mode = QPushButton("Add square centers")
         layout_mode.clicked.connect(lambda: self.canvas.set_mode("layout"))
+        pipette_mode = QPushButton("Pipette")
+        pipette_mode.clicked.connect(lambda: self.canvas.set_mode("pipette"))
         view_mode = QPushButton("Pan/zoom")
         view_mode.clicked.connect(lambda: self.canvas.set_mode("view"))
         modes.addWidget(scale_mode)
         modes.addWidget(layout_mode)
+        modes.addWidget(pipette_mode)
         modes.addWidget(view_mode)
         layout.addLayout(modes)
 
@@ -396,28 +462,27 @@ class MainWindow(QMainWindow):
         available = screen.availableGeometry() if screen is not None else self.geometry()
         max_width = max(400, int(available.width() * 0.85))
         max_height = max(300, int(available.height() * 0.85))
-        preview_pixmap = panel_pixmap.scaled(
-            max_width,
-            max_height,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-
         dialog = QDialog(self)
         dialog.setWindowTitle("Pink-square threshold preview")
         dialog_layout = QVBoxLayout(dialog)
         preview_label = QLabel()
         preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        preview_label.setPixmap(preview_pixmap)
-        dialog_layout.addWidget(preview_label)
-        scale_percent = preview_pixmap.width() / panel_pixmap.width() * 100 if panel_pixmap.width() else 100
+        preview_label.setPixmap(panel_pixmap)
+        preview_label.adjustSize()
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(preview_label)
+        scroll_area.setWidgetResizable(False)
+        dialog_layout.addWidget(scroll_area)
         dialog_layout.addWidget(
             QLabel(
-                f"Preview scaled to {scale_percent:.0f}% to fit on screen "
-                f"(original panel: {panel_pixmap.width()}×{panel_pixmap.height()} px)."
+                f"Scrollable preview at 100% "
+                f"(panel: {panel_pixmap.width()}×{panel_pixmap.height()} px)."
             )
         )
-        dialog.resize(preview_pixmap.width() + 40, preview_pixmap.height() + 90)
+        dialog.resize(
+            min(panel_pixmap.width() + 60, max_width),
+            min(panel_pixmap.height() + 110, max_height),
+        )
         dialog.exec()
         if scale is None:
             area_note = "no scale drawn yet; square area filtering disabled for this preview"
@@ -427,6 +492,40 @@ class MainWindow(QMainWindow):
             area_note = f"square area filter {min_px:.0f}-{max_px:.0f} px² from {settings.square_area_min_mm2:g}-{settings.square_area_max_mm2:g} mm²"
         self.log.append(
             f"Preview found {len(squares)} pink-square candidate(s) after dilate/close/fill holes/erode ({area_note})."
+        )
+
+    def apply_pipette_thresholds(self, rect: QRectF) -> None:
+        if self.current_rgb is None:
+            QMessageBox.warning(self, "No image", "Open a reference image before using the pipette.")
+            return
+        x = math.floor(rect.left())
+        y = math.floor(rect.top())
+        width = max(1, math.ceil(rect.right()) - x)
+        height = max(1, math.ceil(rect.bottom()) - y)
+        try:
+            hue, saturation, brightness = hsb_thresholds_from_region(
+                self.current_rgb, x, y, width, height
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Empty pipette selection", str(exc))
+            return
+
+        self.h_min.setValue(hue.minimum)
+        self.h_max.setValue(hue.maximum)
+        self.h_inv.setChecked(hue.invert)
+        self.s_min.setValue(saturation.minimum)
+        self.s_max.setValue(saturation.maximum)
+        self.s_inv.setChecked(saturation.invert)
+        self.b_min.setValue(brightness.minimum)
+        self.b_max.setValue(brightness.maximum)
+        self.b_inv.setChecked(brightness.invert)
+        self.tabs.setCurrentIndex(1)
+        self.log.append(
+            "Pipette set HSB thresholds from "
+            f"{width}×{height} px rectangle at ({x}, {y}): "
+            f"H {hue.minimum}-{hue.maximum}{' inverted' if hue.invert else ''}, "
+            f"S {saturation.minimum}-{saturation.maximum}, "
+            f"V {brightness.minimum}-{brightness.maximum}."
         )
 
     def run_batch(self) -> None:

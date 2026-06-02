@@ -6,6 +6,11 @@ import pytest
 def needs_imaging_stack():
     if importlib.util.find_spec("numpy") is None or importlib.util.find_spec("cv2") is None:
         pytest.skip("OpenCV and NumPy are not installed in this environment")
+    try:
+        import cv2  # noqa: F401
+        import numpy  # noqa: F401
+    except ImportError as exc:
+        pytest.skip(f"OpenCV and NumPy are not usable in this environment: {exc}")
 
 
 def test_detect_squares_and_match_layout_with_imagej_style_hsb_thresholds():
@@ -58,3 +63,40 @@ def test_detect_caterpillar_uses_retry_morphology_for_dark_blob():
         "threshold_44_143_erode2_dilate2",
         "threshold_44_123_erode1_dilate1",
     }
+
+
+def test_hsb_thresholds_from_region_uses_selected_rectangle_values():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.processing import hsb_thresholds_from_region
+
+    image = np.zeros((20, 20, 3), dtype=np.uint8)
+    image[:, :] = [0, 0, 0]
+    image[5:15, 4:12] = [255, 0, 255]
+
+    hue, saturation, brightness = hsb_thresholds_from_region(image, 4, 5, 8, 10)
+
+    assert hue.minimum == hue.maximum
+    assert not hue.invert
+    assert saturation.minimum == 255
+    assert saturation.maximum == 255
+    assert brightness.minimum == 255
+    assert brightness.maximum == 255
+
+
+def test_hsb_thresholds_from_region_represents_wrapping_hues_with_inversion():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.processing import hsb_thresholds_from_region
+
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    image[:, :4] = [255, 0, 0]
+    image[:, 4:] = [255, 0, 16]
+
+    hue, _, _ = hsb_thresholds_from_region(image, 0, 0, 8, 8)
+
+    assert hue.invert
+    assert hue.minimum > 0
+    assert hue.maximum < 255
