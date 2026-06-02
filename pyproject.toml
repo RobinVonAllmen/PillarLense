@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pillar-lense"
+version = "0.1.0"
+description = "Interactive PyQt6 desktop app for pink-square and caterpillar projected-area segmentation."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyQt6>=6.6",
+  "opencv-python>=4.8",
+  "numpy>=1.24",
+  "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+pillar-lense = "pillar_lense.app:main"
+
+[tool.setuptools.packages.find]
+include = ["pillar_lense*"]
