@@ -53,6 +53,14 @@ def write_rgb(path: str | Path, image: np.ndarray) -> None:
     cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
 
+def hsb_channels(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return ImageJ-style HSB channels on a 0-255 scale after denoising."""
+    denoised = cv2.medianBlur(rgb, 3)
+    hsv = cv2.cvtColor(denoised, cv2.COLOR_RGB2HSV)
+    hue_ij = np.rint(hsv[:, :, 0].astype(np.float32) * 255.0 / 179.0).astype(np.uint8)
+    return hue_ij, hsv[:, :, 1], hsv[:, :, 2]
+
+
 def threshold_channel(channel: np.ndarray, threshold: HSBThreshold) -> np.ndarray:
     mask = cv2.inRange(channel, threshold.minimum, threshold.maximum)
     return cv2.bitwise_not(mask) if threshold.invert else mask
@@ -70,17 +78,60 @@ def fill_holes(mask: np.ndarray) -> np.ndarray:
 
 def hsb_masks(rgb: np.ndarray, settings: ProcessingSettings) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return Hue, Saturation, Brightness, and final AND mask on an ImageJ-like 0-255 scale."""
-    denoised = cv2.medianBlur(rgb, 3)
-    hsv = cv2.cvtColor(denoised, cv2.COLOR_RGB2HSV)
-    hue_ij = np.rint(hsv[:, :, 0].astype(np.float32) * 255.0 / 179.0).astype(np.uint8)
-    saturation = hsv[:, :, 1]
-    brightness = hsv[:, :, 2]
+    hue_ij, saturation, brightness = hsb_channels(rgb)
 
     hue_mask = threshold_channel(hue_ij, settings.hue)
     saturation_mask = threshold_channel(saturation, settings.saturation)
     brightness_mask = threshold_channel(brightness, settings.brightness)
     final_mask = cv2.bitwise_and(cv2.bitwise_and(hue_mask, saturation_mask), brightness_mask)
     return hue_mask, saturation_mask, brightness_mask, final_mask
+
+
+def _circular_hue_threshold(values: np.ndarray) -> HSBThreshold:
+    """Return the smallest 0-255 circular hue threshold covering values."""
+    unique = np.unique(values.astype(np.uint8)).astype(int)
+    if unique.size == 0:
+        return HSBThreshold(0, 255, False)
+    if unique.size == 1:
+        value = int(unique[0])
+        return HSBThreshold(value, value, False)
+
+    ordered = np.sort(unique)
+    gaps = np.diff(np.concatenate([ordered, [ordered[0] + 256]]))
+    largest_gap_index = int(np.argmax(gaps))
+    largest_gap = int(gaps[largest_gap_index])
+    # If the best interval does not wrap around 0, store it directly.
+    start = int((ordered[(largest_gap_index + 1) % ordered.size]) % 256)
+    end = int(ordered[largest_gap_index])
+    if start <= end:
+        return HSBThreshold(start, end, False)
+
+    # A wrapping hue interval is represented by inverting the excluded gap.
+    excluded_start = (end + 1) % 256
+    excluded_end = (start - 1) % 256
+    if largest_gap <= 1:
+        return HSBThreshold(0, 255, False)
+    return HSBThreshold(excluded_start, excluded_end, True)
+
+
+def hsb_thresholds_from_region(
+    rgb: np.ndarray, x: int, y: int, width: int, height: int
+) -> tuple[HSBThreshold, HSBThreshold, HSBThreshold]:
+    """Create HSB thresholds from all pixels inside an image rectangle."""
+    image_height, image_width = rgb.shape[:2]
+    left = max(0, min(image_width, x))
+    top = max(0, min(image_height, y))
+    right = max(left, min(image_width, x + width))
+    bottom = max(top, min(image_height, y + height))
+    if right <= left or bottom <= top:
+        raise ValueError("Pipette rectangle must cover at least one image pixel")
+
+    hue, saturation, brightness = hsb_channels(rgb[top:bottom, left:right])
+    return (
+        _circular_hue_threshold(hue.reshape(-1)),
+        HSBThreshold(int(saturation.min()), int(saturation.max()), False),
+        HSBThreshold(int(brightness.min()), int(brightness.max()), False),
+    )
 
 
 def clean_square_mask(mask: np.ndarray) -> np.ndarray:
