@@ -345,6 +345,25 @@ class MainWindow(QMainWindow):
         self.s_min, self.s_max, self.s_inv = self._threshold_group(layout, "Saturation", self.settings.saturation)
         self.b_min, self.b_max, self.b_inv = self._threshold_group(layout, "Brightness", self.settings.brightness)
 
+        denoise_box = QGroupBox("Screen artefact denoising")
+        denoise_form = QFormLayout(denoise_box)
+        self.denoise_enabled = QCheckBox("Apply ImageJ Despeckle-style median filter before thresholding")
+        self.denoise_enabled.setChecked(self.settings.denoise_enabled)
+        self.denoise_kernel = QSpinBox()
+        self.denoise_kernel.setRange(1, 31)
+        self.denoise_kernel.setSingleStep(2)
+        self.denoise_kernel.setValue(self.settings.denoise_kernel_size)
+        self.denoise_kernel.setSuffix(" px")
+        denoise_form.addRow(self.denoise_enabled)
+        denoise_form.addRow("Median kernel size", self.denoise_kernel)
+        denoise_form.addRow(
+            QLabel(
+                "Use 3 px for ImageJ Despeckle; raise to 5-7 px for "
+                "stronger moiré/screen-pattern suppression."
+            )
+        )
+        layout.addWidget(denoise_box)
+
         particle_box = QGroupBox("Particle filters")
         form = QFormLayout(particle_box)
         self.square_min = self._double_spin(self.settings.square_area_min_mm2, 0, 1_000_000)
@@ -427,6 +446,8 @@ class MainWindow(QMainWindow):
             caterpillar_threshold_low=self.cat_low.value(),
             caterpillar_threshold_high=self.cat_high.value(),
             caterpillar_retry_threshold_high=self.cat_retry_high.value(),
+            denoise_enabled=self.denoise_enabled.isChecked(),
+            denoise_kernel_size=self.denoise_kernel.value(),
             regression_intercept=self.reg_intercept.value(),
             regression_slope=self.reg_slope.value(),
         )
@@ -448,6 +469,8 @@ class MainWindow(QMainWindow):
         self.cat_low.setValue(settings.caterpillar_threshold_low)
         self.cat_high.setValue(settings.caterpillar_threshold_high)
         self.cat_retry_high.setValue(settings.caterpillar_retry_threshold_high)
+        self.denoise_enabled.setChecked(settings.denoise_enabled)
+        self.denoise_kernel.setValue(settings.denoise_kernel_size)
         self.reg_intercept.setValue(settings.regression_intercept)
         self.reg_slope.setValue(settings.regression_slope)
 
@@ -515,8 +538,14 @@ class MainWindow(QMainWindow):
             min_px = settings.square_area_min_mm2 / (scale**2)
             max_px = settings.square_area_max_mm2 / (scale**2)
             area_note = f"square area filter {min_px:.0f}-{max_px:.0f} px² from {settings.square_area_min_mm2:g}-{settings.square_area_max_mm2:g} mm²"
+        denoise_note = (
+            f"median denoise {settings.denoise_kernel_size} px"
+            if settings.denoise_enabled
+            else "denoise off"
+        )
         self.log.append(
-            f"Preview found {len(squares)} pink-square candidate(s) after dilate/close/fill holes/erode ({area_note})."
+            f"Preview found {len(squares)} pink-square candidate(s) after {denoise_note} and "
+            f"dilate/close/fill holes/erode ({area_note})."
         )
 
     def apply_pipette_thresholds(self, rect: QRectF) -> None:
@@ -529,7 +558,7 @@ class MainWindow(QMainWindow):
         height = max(1, math.ceil(rect.bottom()) - y)
         try:
             hue, saturation, brightness = hsb_thresholds_from_region(
-                self.current_rgb, x, y, width, height
+                self.current_rgb, x, y, width, height, self.collect_settings()
             )
         except ValueError as exc:
             QMessageBox.warning(self, "Empty pipette selection", str(exc))
