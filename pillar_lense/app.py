@@ -45,10 +45,11 @@ if __package__ in {None, ""}:
         BatchOutput,
         detect_squares,
         hsb_thresholds_from_region,
+        image_difference_stats,
         make_mask_panel,
         process_batch,
         read_rgb,
-        reduce_moire_aliasing,
+        threshold_input_rgb,
     )
 else:
     from .models import HSBThreshold, ProcessingSettings
@@ -56,10 +57,11 @@ else:
         BatchOutput,
         detect_squares,
         hsb_thresholds_from_region,
+        image_difference_stats,
         make_mask_panel,
         process_batch,
         read_rgb,
-        reduce_moire_aliasing,
+        threshold_input_rgb,
     )
 
 
@@ -491,14 +493,15 @@ class MainWindow(QMainWindow):
             return
         settings = self.collect_settings()
         scale = self.computed_scale()
-        squares, masks = detect_squares(self.current_rgb, settings, scale)
-        preview_rgb = reduce_moire_aliasing(self.current_rgb, settings.moire_reduction_strength)
+        preview_rgb = threshold_input_rgb(self.current_rgb, settings)
+        squares, masks = detect_squares(self.current_rgb, settings, scale, threshold_rgb=preview_rgb)
         panel = make_mask_panel(
             masks,
             preview_rgb,
             squares,
             original_rgb=self.current_rgb if settings.moire_reduction_strength else None,
         )
+        mean_delta, max_delta = image_difference_stats(self.current_rgb, preview_rgb)
         panel_pixmap = rgb_to_qpixmap(panel)
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else self.geometry()
@@ -514,7 +517,8 @@ class MainWindow(QMainWindow):
             QLabel(
                 "Use the mouse wheel or two-finger touchpad gesture to zoom; "
                 "drag to pan "
-                f"(panel: {panel_pixmap.width()}×{panel_pixmap.height()} px)."
+                f"(panel: {panel_pixmap.width()}×{panel_pixmap.height()} px; "
+                f"de-moiré Δ mean {mean_delta:.2f}, max {max_delta})."
             )
         )
         dialog.resize(
@@ -530,7 +534,8 @@ class MainWindow(QMainWindow):
             area_note = f"square area filter {min_px:.0f}-{max_px:.0f} px² from {settings.square_area_min_mm2:g}-{settings.square_area_max_mm2:g} mm²"
         self.log.append(
             f"Preview found {len(squares)} pink-square candidate(s) after de-moiré strength "
-            f"{settings.moire_reduction_strength} and dilate/close/fill holes/erode ({area_note})."
+            f"{settings.moire_reduction_strength} (RGB Δ mean {mean_delta:.2f}, max {max_delta}) "
+            f"and dilate/close/fill holes/erode ({area_note})."
         )
 
     def apply_pipette_thresholds(self, rect: QRectF) -> None:

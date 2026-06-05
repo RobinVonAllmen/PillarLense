@@ -185,7 +185,33 @@ def test_mask_panel_shows_original_and_denoised_preview_when_requested():
 
     panel = make_mask_panel(masks, filtered, original_rgb=image)
 
-    # Lower-right quadrant is split: left half is original, right half is the
-    # actual de-moiré image that will be submitted to thresholding.
+    # Lower-right quadrant is split into original, actual de-moiré input, and
+    # amplified difference so the preview proves preprocessing was applied.
     assert panel[120, 90].tolist() == image[40, 10].tolist()
-    assert panel[120, 130].tolist() == filtered[40, 50].tolist()
+    assert panel[120, 120].tolist() == filtered[40, 40].tolist()
+
+    expected_difference = np.clip(np.abs(image[40, 65].astype(int) - filtered[40, 65].astype(int)) * 6, 0, 255)
+    assert panel[120, 145].tolist() == expected_difference.astype(np.uint8).tolist()
+
+
+def test_detect_squares_can_use_the_same_threshold_input_shown_in_preview():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.models import HSBThreshold, ProcessingSettings
+    from pillar_lense.processing import detect_squares
+
+    image = np.zeros((80, 80, 3), dtype=np.uint8)
+    image[20:60, 20:60] = [255, 0, 255]
+    threshold_input = np.zeros_like(image)
+    settings = ProcessingSettings(
+        hue=HSBThreshold(12, 200, True),
+        saturation=HSBThreshold(40, 255, False),
+        brightness=HSBThreshold(1, 255, False),
+        square_area_min_mm2=5.0,
+        square_area_max_mm2=8.0,
+    )
+
+    squares, _ = detect_squares(image, settings, scale_mm_per_px=0.05, threshold_rgb=threshold_input)
+
+    assert squares == []

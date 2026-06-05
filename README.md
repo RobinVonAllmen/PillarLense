@@ -120,7 +120,7 @@ The output folder contains:
 
 - `AreaMeasurements.csv` with one row per detected caterpillar object.
 - `<image>_sq<index>_mask.png` annotated crop overlays for each processed square.
-- `debug/<image>_threshold_panel.png` HSB threshold panels when debug-mask saving is enabled. The HSB masks are generated after any configured pre-threshold de-moiré smoothing. When de-moiré is enabled, the fourth panel shows a split original/de-moiré-input overlay so the preprocessing effect is visible; otherwise it shows the detected square overlay.
+- `debug/<image>_threshold_panel.png` HSB threshold panels when debug-mask saving is enabled. The HSB masks are generated after any configured pre-threshold de-moiré smoothing. When de-moiré is enabled, the fourth panel shows a split original/de-moiré-input/amplified-difference overlay so the preprocessing effect is visible; otherwise it shows the detected square overlay.
 
 ## Optional weight estimation
 
