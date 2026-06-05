@@ -45,9 +45,11 @@ if __package__ in {None, ""}:
         BatchOutput,
         detect_squares,
         hsb_thresholds_from_region,
+        image_difference_stats,
         make_mask_panel,
         process_batch,
         read_rgb,
+        threshold_input_rgb,
     )
 else:
     from .models import HSBThreshold, ProcessingSettings
@@ -55,9 +57,11 @@ else:
         BatchOutput,
         detect_squares,
         hsb_thresholds_from_region,
+        image_difference_stats,
         make_mask_panel,
         process_batch,
         read_rgb,
+        threshold_input_rgb,
     )
 
 
@@ -354,6 +358,8 @@ class MainWindow(QMainWindow):
         self.cat_low = self._spin(self.settings.caterpillar_threshold_low)
         self.cat_high = self._spin(self.settings.caterpillar_threshold_high)
         self.cat_retry_high = self._spin(self.settings.caterpillar_retry_threshold_high)
+        self.moire_strength = self._spin(self.settings.moire_reduction_strength)
+        self.moire_strength.setToolTip("0 disables preprocessing; try 40-80 for screen-photo ripple/moire artifacts, then re-preview and adjust thresholds.")
         form.addRow("Pink square area min mm²", self.square_min)
         form.addRow("Pink square area max mm²", self.square_max)
         form.addRow("Caterpillar area min px²", self.cat_min)
@@ -361,6 +367,7 @@ class MainWindow(QMainWindow):
         form.addRow("Caterpillar gray low", self.cat_low)
         form.addRow("Caterpillar gray high", self.cat_high)
         form.addRow("Retry gray high", self.cat_retry_high)
+        form.addRow("Pre-threshold de-moiré strength", self.moire_strength)
         layout.addWidget(particle_box)
 
         regression_box = QGroupBox("Optional area-to-weight regression")
@@ -427,6 +434,7 @@ class MainWindow(QMainWindow):
             caterpillar_threshold_low=self.cat_low.value(),
             caterpillar_threshold_high=self.cat_high.value(),
             caterpillar_retry_threshold_high=self.cat_retry_high.value(),
+            moire_reduction_strength=self.moire_strength.value(),
             regression_intercept=self.reg_intercept.value(),
             regression_slope=self.reg_slope.value(),
         )
@@ -448,6 +456,7 @@ class MainWindow(QMainWindow):
         self.cat_low.setValue(settings.caterpillar_threshold_low)
         self.cat_high.setValue(settings.caterpillar_threshold_high)
         self.cat_retry_high.setValue(settings.caterpillar_retry_threshold_high)
+        self.moire_strength.setValue(settings.moire_reduction_strength)
         self.reg_intercept.setValue(settings.regression_intercept)
         self.reg_slope.setValue(settings.regression_slope)
 
@@ -484,8 +493,15 @@ class MainWindow(QMainWindow):
             return
         settings = self.collect_settings()
         scale = self.computed_scale()
-        squares, masks = detect_squares(self.current_rgb, settings, scale)
-        panel = make_mask_panel(masks, self.current_rgb, squares)
+        preview_rgb = threshold_input_rgb(self.current_rgb, settings)
+        squares, masks = detect_squares(self.current_rgb, settings, scale, threshold_rgb=preview_rgb)
+        panel = make_mask_panel(
+            masks,
+            preview_rgb,
+            squares,
+            original_rgb=self.current_rgb if settings.moire_reduction_strength else None,
+        )
+        mean_delta, max_delta = image_difference_stats(self.current_rgb, preview_rgb)
         panel_pixmap = rgb_to_qpixmap(panel)
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else self.geometry()
@@ -501,7 +517,8 @@ class MainWindow(QMainWindow):
             QLabel(
                 "Use the mouse wheel or two-finger touchpad gesture to zoom; "
                 "drag to pan "
-                f"(panel: {panel_pixmap.width()}×{panel_pixmap.height()} px)."
+                f"(panel: {panel_pixmap.width()}×{panel_pixmap.height()} px; "
+                f"de-moiré Δ mean {mean_delta:.2f}, max {max_delta})."
             )
         )
         dialog.resize(
@@ -516,7 +533,9 @@ class MainWindow(QMainWindow):
             max_px = settings.square_area_max_mm2 / (scale**2)
             area_note = f"square area filter {min_px:.0f}-{max_px:.0f} px² from {settings.square_area_min_mm2:g}-{settings.square_area_max_mm2:g} mm²"
         self.log.append(
-            f"Preview found {len(squares)} pink-square candidate(s) after dilate/close/fill holes/erode ({area_note})."
+            f"Preview found {len(squares)} pink-square candidate(s) after de-moiré strength "
+            f"{settings.moire_reduction_strength} (RGB Δ mean {mean_delta:.2f}, max {max_delta}) "
+            f"and dilate/close/fill holes/erode ({area_note})."
         )
 
     def apply_pipette_thresholds(self, rect: QRectF) -> None:
@@ -529,7 +548,7 @@ class MainWindow(QMainWindow):
         height = max(1, math.ceil(rect.bottom()) - y)
         try:
             hue, saturation, brightness = hsb_thresholds_from_region(
-                self.current_rgb, x, y, width, height
+                self.current_rgb, x, y, width, height, self.collect_settings().moire_reduction_strength
             )
         except ValueError as exc:
             QMessageBox.warning(self, "Empty pipette selection", str(exc))
@@ -550,7 +569,8 @@ class MainWindow(QMainWindow):
             f"{width}×{height} px rectangle at ({x}, {y}): "
             f"H {hue.minimum}-{hue.maximum}{' inverted' if hue.invert else ''}, "
             f"S {saturation.minimum}-{saturation.maximum}, "
-            f"V {brightness.minimum}-{brightness.maximum}."
+            f"V {brightness.minimum}-{brightness.maximum} "
+            f"(de-moiré strength {self.moire_strength.value()})."
         )
 
     def run_batch(self) -> None:

@@ -131,3 +131,87 @@ def test_make_mask_panel_overlays_detected_square_particles_on_lower_right_quadr
     assert highlighted_square_pixel[1] > highlighted_square_pixel[0]
     assert highlighted_square_pixel[2] > highlighted_square_pixel[0]
     assert rejected_speck_pixel.tolist() == image[92, 92].tolist()
+
+
+def test_reduce_moire_aliasing_low_passes_periodic_screen_pattern():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.processing import reduce_moire_aliasing
+
+    image = np.full((80, 80, 3), 128, dtype=np.uint8)
+    image[:, ::2] = [60, 60, 60]
+    image[:, 1::2] = [196, 196, 196]
+
+    filtered = reduce_moire_aliasing(image, strength=80)
+
+    assert filtered.shape == image.shape
+    assert filtered.dtype == image.dtype
+    assert filtered[:, :, 0].std() < image[:, :, 0].std() * 0.75
+
+
+def test_hsb_masks_apply_configured_moire_reduction_before_thresholding():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.models import HSBThreshold, ProcessingSettings
+    from pillar_lense.processing import hsb_masks
+
+    image = np.full((80, 80, 3), [255, 0, 255], dtype=np.uint8)
+    image[:, ::2] = [0, 0, 0]
+    settings = ProcessingSettings(
+        brightness=HSBThreshold(80, 255, False),
+        moire_reduction_strength=80,
+    )
+
+    _, _, brightness_mask, _ = hsb_masks(image, settings)
+
+    # The de-moiré pass runs before HSB conversion, so black display-grid
+    # aliases are lifted out of pure black before the brightness threshold.
+    assert brightness_mask[:, ::2].mean() > 0
+
+
+def test_mask_panel_shows_original_and_denoised_preview_when_requested():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.processing import make_mask_panel, reduce_moire_aliasing
+
+    image = np.full((80, 80, 3), 128, dtype=np.uint8)
+    image[:, ::2] = [60, 60, 60]
+    image[:, 1::2] = [196, 196, 196]
+    filtered = reduce_moire_aliasing(image, strength=80)
+    masks = tuple(np.zeros((80, 80), dtype=np.uint8) for _ in range(4))
+
+    panel = make_mask_panel(masks, filtered, original_rgb=image)
+
+    # Lower-right quadrant is split into original, actual de-moiré input, and
+    # amplified difference so the preview proves preprocessing was applied.
+    assert panel[120, 90].tolist() == image[40, 10].tolist()
+    assert panel[120, 120].tolist() == filtered[40, 40].tolist()
+
+    expected_difference = np.clip(np.abs(image[40, 65].astype(int) - filtered[40, 65].astype(int)) * 6, 0, 255)
+    assert panel[120, 145].tolist() == expected_difference.astype(np.uint8).tolist()
+
+
+def test_detect_squares_can_use_the_same_threshold_input_shown_in_preview():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.models import HSBThreshold, ProcessingSettings
+    from pillar_lense.processing import detect_squares
+
+    image = np.zeros((80, 80, 3), dtype=np.uint8)
+    image[20:60, 20:60] = [255, 0, 255]
+    threshold_input = np.zeros_like(image)
+    settings = ProcessingSettings(
+        hue=HSBThreshold(12, 200, True),
+        saturation=HSBThreshold(40, 255, False),
+        brightness=HSBThreshold(1, 255, False),
+        square_area_min_mm2=5.0,
+        square_area_max_mm2=8.0,
+    )
+
+    squares, _ = detect_squares(image, settings, scale_mm_per_px=0.05, threshold_rgb=threshold_input)
+
+    assert squares == []

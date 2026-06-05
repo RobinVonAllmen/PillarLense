@@ -34,6 +34,7 @@ class ProcessingSettings:
     caterpillar_threshold_low: int = 44
     caterpillar_threshold_high: int = 143
     caterpillar_retry_threshold_high: int = 123
+    moire_reduction_strength: int = 0
     save_debug_masks: bool = True
     regression_intercept: float = 0.0
     regression_slope: float = 0.0

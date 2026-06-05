@@ -53,8 +53,55 @@ def write_rgb(path: str | Path, image: np.ndarray) -> None:
     cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
 
+def reduce_moire_aliasing(rgb: np.ndarray, strength: int = 0) -> np.ndarray:
+    """Suppress screen-photo moiré before thresholding while preserving large region edges.
+
+    Moiré from photographing a display usually appears both as fine pixel-grid
+    aliases and as colored ripple bands.  The preprocessing is opt-in and
+    deliberately runs on the color image before any HSB/gray thresholding:
+
+    * an area downsample/upsample pass removes display/camera pixel-grid detail,
+    * a bilateral luminance pass keeps strong object boundaries usable, and
+    * stronger chroma smoothing in LAB space removes colored ripple bands that
+      otherwise fragment Hue/Saturation/Value masks.
+    """
+    strength = max(0, min(100, int(strength)))
+    if strength == 0:
+        return rgb
+
+    height, width = rgb.shape[:2]
+    scale = 1.0 + strength / 35.0
+    reduced_width = max(1, int(round(width / scale)))
+    reduced_height = max(1, int(round(height / scale)))
+    low_pass = cv2.resize(rgb, (reduced_width, reduced_height), interpolation=cv2.INTER_AREA)
+    low_pass = cv2.resize(low_pass, (width, height), interpolation=cv2.INTER_CUBIC)
+
+    lab = cv2.cvtColor(low_pass, cv2.COLOR_RGB2LAB)
+    luminance, channel_a, channel_b = cv2.split(lab)
+
+    bilateral_diameter = 5 + 2 * (strength // 20)
+    luminance = cv2.bilateralFilter(
+        luminance,
+        bilateral_diameter,
+        20 + strength,
+        8 + strength // 2,
+    )
+
+    chroma_kernel = 3 + 2 * max(1, strength // 8)
+    channel_a = cv2.GaussianBlur(channel_a, (chroma_kernel, chroma_kernel), 0)
+    channel_b = cv2.GaussianBlur(channel_b, (chroma_kernel, chroma_kernel), 0)
+
+    return cv2.cvtColor(cv2.merge((luminance, channel_a, channel_b)), cv2.COLOR_LAB2RGB)
+
+
+def image_difference_stats(original_rgb: np.ndarray, processed_rgb: np.ndarray) -> tuple[float, int]:
+    """Return mean and max absolute RGB-channel delta between two images."""
+    delta = cv2.absdiff(original_rgb, processed_rgb)
+    return float(delta.mean()), int(delta.max())
+
+
 def hsb_channels(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return ImageJ-style HSB channels on a 0-255 scale after denoising."""
+    """Return ImageJ-style HSB channels on a 0-255 scale from a threshold-input image."""
     denoised = cv2.medianBlur(rgb, 3)
     hsv = cv2.cvtColor(denoised, cv2.COLOR_RGB2HSV)
     hue_ij = np.rint(hsv[:, :, 0].astype(np.float32) * 255.0 / 179.0).astype(np.uint8)
@@ -76,9 +123,19 @@ def fill_holes(mask: np.ndarray) -> np.ndarray:
     return cv2.bitwise_or(mask, holes)
 
 
-def hsb_masks(rgb: np.ndarray, settings: ProcessingSettings) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def threshold_input_rgb(rgb: np.ndarray, settings: ProcessingSettings) -> np.ndarray:
+    """Return the exact RGB image submitted to HSB/gray thresholding."""
+    return reduce_moire_aliasing(rgb, settings.moire_reduction_strength)
+
+
+def hsb_masks(
+    rgb: np.ndarray,
+    settings: ProcessingSettings,
+    threshold_rgb: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return Hue, Saturation, Brightness, and final AND mask on an ImageJ-like 0-255 scale."""
-    hue_ij, saturation, brightness = hsb_channels(rgb)
+    threshold_source = threshold_input_rgb(rgb, settings) if threshold_rgb is None else threshold_rgb
+    hue_ij, saturation, brightness = hsb_channels(threshold_source)
 
     hue_mask = threshold_channel(hue_ij, settings.hue)
     saturation_mask = threshold_channel(saturation, settings.saturation)
@@ -115,7 +172,12 @@ def _circular_hue_threshold(values: np.ndarray) -> HSBThreshold:
 
 
 def hsb_thresholds_from_region(
-    rgb: np.ndarray, x: int, y: int, width: int, height: int
+    rgb: np.ndarray,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    moire_reduction_strength: int = 0,
 ) -> tuple[HSBThreshold, HSBThreshold, HSBThreshold]:
     """Create HSB thresholds from all pixels inside an image rectangle."""
     image_height, image_width = rgb.shape[:2]
@@ -126,7 +188,8 @@ def hsb_thresholds_from_region(
     if right <= left or bottom <= top:
         raise ValueError("Pipette rectangle must cover at least one image pixel")
 
-    hue, saturation, brightness = hsb_channels(rgb[top:bottom, left:right])
+    threshold_source = reduce_moire_aliasing(rgb[top:bottom, left:right], moire_reduction_strength)
+    hue, saturation, brightness = hsb_channels(threshold_source)
     return (
         _circular_hue_threshold(hue.reshape(-1)),
         HSBThreshold(int(saturation.min()), int(saturation.max()), False),
@@ -191,8 +254,9 @@ def detect_squares(
     rgb: np.ndarray,
     settings: ProcessingSettings,
     scale_mm_per_px: float | None = None,
+    threshold_rgb: np.ndarray | None = None,
 ) -> tuple[list[Particle], tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
-    masks = hsb_masks(rgb, settings)
+    masks = hsb_masks(rgb, settings, threshold_rgb)
     cleaned = clean_square_mask(masks[-1])
     square_area_min_px, square_area_max_px = square_area_limits_px(settings, scale_mm_per_px)
     particles = analyze_particles(
@@ -226,7 +290,7 @@ def _threshold_gray_range(gray: np.ndarray, low: int, high: int) -> np.ndarray:
 
 
 def detect_caterpillars(crop_rgb: np.ndarray, settings: ProcessingSettings) -> tuple[list[Particle], np.ndarray, str]:
-    gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+    gray = cv2.cvtColor(threshold_input_rgb(crop_rgb, settings), cv2.COLOR_RGB2GRAY)
     attempts = [
         ("threshold_44_143_fill_holes", settings.caterpillar_threshold_high, 0, 0),
         ("threshold_44_143_erode2_dilate2", settings.caterpillar_threshold_high, 2, 2),
@@ -302,8 +366,16 @@ def make_mask_panel(
     masks: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
     rgb: np.ndarray | None = None,
     square_particles: Iterable[Particle] | None = None,
+    original_rgb: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Build a 2×2 threshold panel with the lower-right quadrant showing square locations."""
+    """Build a 2×2 threshold panel with lower-right square/preprocessing context.
+
+    When ``original_rgb`` is supplied, the lower-right panel is split into the
+    original image, the exact de-moiré image used for thresholding, and an
+    amplified difference view. This makes the preprocessing effect visible in
+    the preview while the first three panels still show the actual threshold
+    masks.
+    """
     hue_mask, saturation_mask, brightness_mask, cleaned_mask = masks
     panels = [
         cv2.cvtColor(hue_mask, cv2.COLOR_GRAY2RGB),
@@ -311,13 +383,45 @@ def make_mask_panel(
         cv2.cvtColor(brightness_mask, cv2.COLOR_GRAY2RGB),
     ]
     labels = ["Hue mask", "Saturation mask", "Brightness mask"]
+    overlay_source = cleaned_mask if square_particles is None else particle_mask(square_particles, cleaned_mask.shape)
     if rgb is None:
         panels.append(cv2.cvtColor(cleaned_mask, cv2.COLOR_GRAY2RGB))
         labels.append("Cleaned final mask")
-    else:
-        overlay_source = cleaned_mask if square_particles is None else particle_mask(square_particles, cleaned_mask.shape)
+    elif original_rgb is None:
         panels.append(overlay_mask(rgb, overlay_source))
         labels.append("Detected square overlay")
+    else:
+        original_overlay = overlay_mask(original_rgb, overlay_source)
+        processed_overlay = overlay_mask(rgb, overlay_source)
+        difference = cv2.convertScaleAbs(cv2.absdiff(original_rgb, rgb), alpha=6.0)
+        split_one = original_overlay.shape[1] // 3
+        split_two = (original_overlay.shape[1] * 2) // 3
+        comparison = original_overlay.copy()
+        comparison[:, split_one:split_two] = processed_overlay[:, split_one:split_two]
+        comparison[:, split_two:] = difference[:, split_two:]
+        comparison[:, max(0, split_one - 1) : split_one + 1] = (255, 255, 255)
+        comparison[:, max(0, split_two - 1) : split_two + 1] = (255, 255, 255)
+        cv2.putText(comparison, "Original", (10, comparison.shape[0] - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(
+            comparison,
+            "De-moire input",
+            (split_one + 10, comparison.shape[0] - 16),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            comparison,
+            "Diff x6",
+            (split_two + 10, comparison.shape[0] - 16),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+        )
+        panels.append(comparison)
+        labels.append("Detected overlay: original | de-moire | diff")
 
     h, w = masks[0].shape[:2]
     canvas = np.zeros((h * 2, w * 2, 3), np.uint8)
@@ -342,7 +446,16 @@ def process_image(
     warnings: list[str] = []
 
     if settings.save_debug_masks:
-        write_rgb(output_dir / "debug" / f"{image_path.stem}_threshold_panel.png", make_mask_panel(masks, rgb, squares))
+        panel_rgb = threshold_input_rgb(rgb, settings)
+        write_rgb(
+            output_dir / "debug" / f"{image_path.stem}_threshold_panel.png",
+            make_mask_panel(
+                masks,
+                panel_rgb,
+                squares,
+                original_rgb=rgb if settings.moire_reduction_strength else None,
+            ),
+        )
 
     if not squares:
         warnings.append(f"No pink squares found in {image_path.name}")
