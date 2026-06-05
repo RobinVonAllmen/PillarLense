@@ -8,8 +8,8 @@ The application implements the same major stages as the macro:
 
 1. **Calibrate image scale** by drawing a known-length line on a reference image.
 2. **Define the plate layout** by clicking expected pink-square centers in the order you want reported as square 1, square 2, etc.
-3. **Tune hot-pink square segmentation** with ImageJ-style HSB thresholds, including per-channel inversion and a 2×2 mask preview panel.
-4. **Batch process image folders** by detecting pink squares, matching them to the user-defined layout, cropping each square, detecting caterpillars, measuring area in pixels and mm², and saving annotated mask PNG files.
+3. **Tune hot-pink square segmentation** with ImageJ-style HSB thresholds, optional ImageJ Despeckle-style median denoising for screen-photo artefacts, per-channel inversion, and a 2×2 mask preview panel.
+4. **Batch process image folders** by denoising images when enabled, detecting pink squares, matching them to the user-defined layout, cropping each square, detecting caterpillars, measuring area in pixels and mm², and saving annotated mask PNG files.
 5. **Export `AreaMeasurements.csv`** with image name, square index, object index, area, scale, centroid coordinates, optional weight estimate, and the successful detection attempt.
 
 ## Installation / virtual environment
@@ -110,9 +110,10 @@ python pillar_lense\app.py
 2. Click **Draw scale line** and click twice on the image to mark a straight line of known length.
 3. Enter the known line length in millimetres. The app displays the computed `mm/px` scale.
 4. Click **Add square centers** and click each expected square center in the desired order. Press **Backspace** or **Delete** to remove the most recent point.
-5. Adjust HSB and particle settings in the **Thresholds** tab. The pink-square area defaults (`6-7 mm²`) are physical square areas from the macro and are converted to pixel area using your drawn scale; they are not caterpillar pixel-area limits.
-6. Use **Preview pink-square mask** to inspect Hue, Saturation, Brightness, and the cleaned final mask after dilate/close/fill-holes/erode. The preview is scaled to fit your screen, with the original panel dimensions shown below it. Draw the scale line before previewing if you want the `6-7 mm²` square-area filter applied; without a scale, the preview shows the cleaned mask without square-area filtering.
-7. Choose input and output folders, then click **Run batch analysis**.
+5. Adjust HSB, denoising, and particle settings in the **Thresholds** tab. The pink-square area defaults (`6-7 mm²`) are physical square areas from the macro and are converted to pixel area using your drawn scale; they are not caterpillar pixel-area limits.
+6. Leave **Screen artefact denoising** enabled for an ImageJ Despeckle-style 3 px median filter, or raise the median kernel to `5-7 px` if photographed-screen moiré, pixel-grid, or speckle patterns are still leaking into the masks. Set it to `1 px` or turn it off if the filter starts rounding small features too much.
+7. Use **Preview pink-square mask** to inspect Hue, Saturation, Brightness, and the cleaned final mask after denoise/dilate/close/fill-holes/erode. The preview is scaled to fit your screen, with the original panel dimensions shown below it. Draw the scale line before previewing if you want the `6-7 mm²` square-area filter applied; without a scale, the preview shows the cleaned mask without square-area filtering.
+8. Choose input and output folders, then click **Run batch analysis**.
 
 ## Outputs
 

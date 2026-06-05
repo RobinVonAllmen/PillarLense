@@ -13,6 +13,22 @@ def needs_imaging_stack():
         pytest.skip(f"OpenCV and NumPy are not usable in this environment: {exc}")
 
 
+def test_denoise_rgb_matches_imagej_despeckle_style_median_filter():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.processing import denoise_rgb
+
+    image = np.full((5, 5, 3), 100, dtype=np.uint8)
+    image[2, 2] = [255, 255, 255]
+
+    denoised = denoise_rgb(image, enabled=True, kernel_size=3)
+    unchanged = denoise_rgb(image, enabled=False, kernel_size=3)
+
+    assert denoised[2, 2].tolist() == [100, 100, 100]
+    assert unchanged[2, 2].tolist() == [255, 255, 255]
+
+
 def test_detect_squares_and_match_layout_with_imagej_style_hsb_thresholds():
     needs_imaging_stack()
     import cv2  # noqa: F401

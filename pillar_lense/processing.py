@@ -53,9 +53,30 @@ def write_rgb(path: str | Path, image: np.ndarray) -> None:
     cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
 
-def hsb_channels(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return ImageJ-style HSB channels on a 0-255 scale after denoising."""
-    denoised = cv2.medianBlur(rgb, 3)
+def denoise_rgb(rgb: np.ndarray, enabled: bool = True, kernel_size: int = 3) -> np.ndarray:
+    """Apply an ImageJ Despeckle-style median filter to reduce screen artefacts.
+
+    ImageJ's Despeckle command is a 3×3 median filter. The configurable
+    kernel lets users strengthen that same style of denoising for moiré or
+    pixel-grid patterns caused by photographing a computer screen.
+    """
+    if not enabled:
+        return rgb
+    kernel = max(1, int(kernel_size))
+    if kernel % 2 == 0:
+        kernel += 1
+    if kernel <= 1:
+        return rgb
+    return cv2.medianBlur(rgb, kernel)
+
+
+def hsb_channels(
+    rgb: np.ndarray,
+    denoise_enabled: bool = True,
+    denoise_kernel_size: int = 3,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return ImageJ-style HSB channels on a 0-255 scale after optional denoising."""
+    denoised = denoise_rgb(rgb, denoise_enabled, denoise_kernel_size)
     hsv = cv2.cvtColor(denoised, cv2.COLOR_RGB2HSV)
     hue_ij = np.rint(hsv[:, :, 0].astype(np.float32) * 255.0 / 179.0).astype(np.uint8)
     return hue_ij, hsv[:, :, 1], hsv[:, :, 2]
@@ -78,7 +99,9 @@ def fill_holes(mask: np.ndarray) -> np.ndarray:
 
 def hsb_masks(rgb: np.ndarray, settings: ProcessingSettings) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return Hue, Saturation, Brightness, and final AND mask on an ImageJ-like 0-255 scale."""
-    hue_ij, saturation, brightness = hsb_channels(rgb)
+    hue_ij, saturation, brightness = hsb_channels(
+        rgb, settings.denoise_enabled, settings.denoise_kernel_size
+    )
 
     hue_mask = threshold_channel(hue_ij, settings.hue)
     saturation_mask = threshold_channel(saturation, settings.saturation)
@@ -115,7 +138,12 @@ def _circular_hue_threshold(values: np.ndarray) -> HSBThreshold:
 
 
 def hsb_thresholds_from_region(
-    rgb: np.ndarray, x: int, y: int, width: int, height: int
+    rgb: np.ndarray,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    settings: ProcessingSettings | None = None,
 ) -> tuple[HSBThreshold, HSBThreshold, HSBThreshold]:
     """Create HSB thresholds from all pixels inside an image rectangle."""
     image_height, image_width = rgb.shape[:2]
@@ -126,7 +154,14 @@ def hsb_thresholds_from_region(
     if right <= left or bottom <= top:
         raise ValueError("Pipette rectangle must cover at least one image pixel")
 
-    hue, saturation, brightness = hsb_channels(rgb[top:bottom, left:right])
+    if settings is None:
+        hue, saturation, brightness = hsb_channels(rgb[top:bottom, left:right])
+    else:
+        hue, saturation, brightness = hsb_channels(
+            rgb[top:bottom, left:right],
+            settings.denoise_enabled,
+            settings.denoise_kernel_size,
+        )
     return (
         _circular_hue_threshold(hue.reshape(-1)),
         HSBThreshold(int(saturation.min()), int(saturation.max()), False),
@@ -226,7 +261,8 @@ def _threshold_gray_range(gray: np.ndarray, low: int, high: int) -> np.ndarray:
 
 
 def detect_caterpillars(crop_rgb: np.ndarray, settings: ProcessingSettings) -> tuple[list[Particle], np.ndarray, str]:
-    gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+    denoised = denoise_rgb(crop_rgb, settings.denoise_enabled, settings.denoise_kernel_size)
+    gray = cv2.cvtColor(denoised, cv2.COLOR_RGB2GRAY)
     attempts = [
         ("threshold_44_143_fill_holes", settings.caterpillar_threshold_high, 0, 0),
         ("threshold_44_143_erode2_dilate2", settings.caterpillar_threshold_high, 2, 2),
