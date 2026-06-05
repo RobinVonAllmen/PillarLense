@@ -48,6 +48,7 @@ if __package__ in {None, ""}:
         make_mask_panel,
         process_batch,
         read_rgb,
+        reduce_moire_aliasing,
     )
 else:
     from .models import HSBThreshold, ProcessingSettings
@@ -58,6 +59,7 @@ else:
         make_mask_panel,
         process_batch,
         read_rgb,
+        reduce_moire_aliasing,
     )
 
 
@@ -355,7 +357,7 @@ class MainWindow(QMainWindow):
         self.cat_high = self._spin(self.settings.caterpillar_threshold_high)
         self.cat_retry_high = self._spin(self.settings.caterpillar_retry_threshold_high)
         self.moire_strength = self._spin(self.settings.moire_reduction_strength)
-        self.moire_strength.setToolTip("0 disables preprocessing; 30-60 is usually enough for screen-photo ripple/moire artifacts.")
+        self.moire_strength.setToolTip("0 disables preprocessing; try 40-80 for screen-photo ripple/moire artifacts, then re-preview and adjust thresholds.")
         form.addRow("Pink square area min mm²", self.square_min)
         form.addRow("Pink square area max mm²", self.square_max)
         form.addRow("Caterpillar area min px²", self.cat_min)
@@ -490,7 +492,13 @@ class MainWindow(QMainWindow):
         settings = self.collect_settings()
         scale = self.computed_scale()
         squares, masks = detect_squares(self.current_rgb, settings, scale)
-        panel = make_mask_panel(masks, self.current_rgb, squares)
+        preview_rgb = reduce_moire_aliasing(self.current_rgb, settings.moire_reduction_strength)
+        panel = make_mask_panel(
+            masks,
+            preview_rgb,
+            squares,
+            original_rgb=self.current_rgb if settings.moire_reduction_strength else None,
+        )
         panel_pixmap = rgb_to_qpixmap(panel)
         screen = QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else self.geometry()

@@ -47,7 +47,7 @@ def test_detect_caterpillar_uses_retry_morphology_for_dark_blob():
     import cv2
     import numpy as np
 
-    from pillar_lense.models import HSBThreshold, ProcessingSettings
+    from pillar_lense.models import ProcessingSettings
     from pillar_lense.processing import detect_caterpillars
 
     crop = np.full((100, 100, 3), 220, dtype=np.uint8)
@@ -169,3 +169,23 @@ def test_hsb_masks_apply_configured_moire_reduction_before_thresholding():
     # The de-moiré pass runs before HSB conversion, so black display-grid
     # aliases are lifted out of pure black before the brightness threshold.
     assert brightness_mask[:, ::2].mean() > 0
+
+
+def test_mask_panel_shows_original_and_denoised_preview_when_requested():
+    needs_imaging_stack()
+    import numpy as np
+
+    from pillar_lense.processing import make_mask_panel, reduce_moire_aliasing
+
+    image = np.full((80, 80, 3), 128, dtype=np.uint8)
+    image[:, ::2] = [60, 60, 60]
+    image[:, 1::2] = [196, 196, 196]
+    filtered = reduce_moire_aliasing(image, strength=80)
+    masks = tuple(np.zeros((80, 80), dtype=np.uint8) for _ in range(4))
+
+    panel = make_mask_panel(masks, filtered, original_rgb=image)
+
+    # Lower-right quadrant is split: left half is original, right half is the
+    # actual de-moiré image that will be submitted to thresholding.
+    assert panel[120, 90].tolist() == image[40, 10].tolist()
+    assert panel[120, 130].tolist() == filtered[40, 50].tolist()
