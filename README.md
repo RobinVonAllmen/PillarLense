@@ -8,7 +8,7 @@ The application implements the same major stages as the macro:
 
 1. **Calibrate image scale** by drawing a known-length line on a reference image.
 2. **Define the plate layout** by clicking expected pink-square centers in the order you want reported as square 1, square 2, etc.
-3. **Tune hot-pink square segmentation** with ImageJ-style HSB thresholds, including per-channel inversion and a 2×2 mask preview panel.
+3. **Tune hot-pink square segmentation** with optional pre-threshold de-moiré smoothing, ImageJ-style HSB thresholds, per-channel inversion, and a 2×2 mask preview panel.
 4. **Batch process image folders** by detecting pink squares, matching them to the user-defined layout, cropping each square, detecting caterpillars, measuring area in pixels and mm², and saving annotated mask PNG files.
 5. **Export `AreaMeasurements.csv`** with image name, square index, object index, area, scale, centroid coordinates, optional weight estimate, and the successful detection attempt.
 
@@ -110,7 +110,7 @@ python pillar_lense\app.py
 2. Click **Draw scale line** and click twice on the image to mark a straight line of known length.
 3. Enter the known line length in millimetres. The app displays the computed `mm/px` scale.
 4. Click **Add square centers** and click each expected square center in the desired order. Press **Backspace** or **Delete** to remove the most recent point.
-5. Adjust HSB and particle settings in the **Thresholds** tab. The pink-square area defaults (`6-7 mm²`) are physical square areas from the macro and are converted to pixel area using your drawn scale; they are not caterpillar pixel-area limits.
+5. Adjust HSB and particle settings in the **Thresholds** tab. If your images were photographed from a screen, raise **Pre-threshold de-moiré strength** from `0` to about `30-60` before changing thresholds; the app low-passes the camera/display pixel-grid pattern and then applies bilateral smoothing before generating Hue, Saturation, Brightness, and caterpillar gray-threshold masks. The pink-square area defaults (`6-7 mm²`) are physical square areas from the macro and are converted to pixel area using your drawn scale; they are not caterpillar pixel-area limits.
 6. Use **Preview pink-square mask** to inspect Hue, Saturation, Brightness, and the cleaned final mask after dilate/close/fill-holes/erode. The preview is scaled to fit your screen, with the original panel dimensions shown below it. Draw the scale line before previewing if you want the `6-7 mm²` square-area filter applied; without a scale, the preview shows the cleaned mask without square-area filtering.
 7. Choose input and output folders, then click **Run batch analysis**.
 
@@ -120,7 +120,7 @@ The output folder contains:
 
 - `AreaMeasurements.csv` with one row per detected caterpillar object.
 - `<image>_sq<index>_mask.png` annotated crop overlays for each processed square.
-- `debug/<image>_threshold_panel.png` HSB threshold panels when debug-mask saving is enabled. The fourth panel is the cleaned final pink-square mask after morphology, not the raw AND mask.
+- `debug/<image>_threshold_panel.png` HSB threshold panels when debug-mask saving is enabled. The HSB masks are generated after any configured pre-threshold de-moiré smoothing, and the fourth panel is the cleaned final pink-square mask after morphology, not the raw AND mask.
 
 ## Optional weight estimation
 

@@ -53,9 +53,35 @@ def write_rgb(path: str | Path, image: np.ndarray) -> None:
     cv2.imwrite(str(path), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
 
 
-def hsb_channels(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return ImageJ-style HSB channels on a 0-255 scale after denoising."""
-    denoised = cv2.medianBlur(rgb, 3)
+def reduce_moire_aliasing(rgb: np.ndarray, strength: int = 0) -> np.ndarray:
+    """Suppress screen-photo moiré before thresholding while preserving large region edges.
+
+    The filter is intentionally conservative and opt-in: it first low-passes
+    camera/display pixel-grid interference with an area downsample/upsample pass,
+    then applies a small bilateral filter so the pink-square and caterpillar
+    boundaries remain sharper than they would after a plain Gaussian blur.
+    """
+    strength = max(0, min(100, int(strength)))
+    if strength == 0:
+        return rgb
+
+    height, width = rgb.shape[:2]
+    scale = 1.0 + strength / 100.0
+    reduced_width = max(1, int(round(width / scale)))
+    reduced_height = max(1, int(round(height / scale)))
+    low_pass = cv2.resize(rgb, (reduced_width, reduced_height), interpolation=cv2.INTER_AREA)
+    smoothed = cv2.resize(low_pass, (width, height), interpolation=cv2.INTER_CUBIC)
+
+    diameter = 3 + 2 * (strength // 25)
+    sigma_color = max(10, strength * 2)
+    sigma_space = max(5, strength)
+    return cv2.bilateralFilter(smoothed, diameter, sigma_color, sigma_space)
+
+
+def hsb_channels(rgb: np.ndarray, moire_reduction_strength: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return ImageJ-style HSB channels on a 0-255 scale after optional de-moiré denoising."""
+    preprocessed = reduce_moire_aliasing(rgb, moire_reduction_strength)
+    denoised = cv2.medianBlur(preprocessed, 3)
     hsv = cv2.cvtColor(denoised, cv2.COLOR_RGB2HSV)
     hue_ij = np.rint(hsv[:, :, 0].astype(np.float32) * 255.0 / 179.0).astype(np.uint8)
     return hue_ij, hsv[:, :, 1], hsv[:, :, 2]
@@ -78,7 +104,7 @@ def fill_holes(mask: np.ndarray) -> np.ndarray:
 
 def hsb_masks(rgb: np.ndarray, settings: ProcessingSettings) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return Hue, Saturation, Brightness, and final AND mask on an ImageJ-like 0-255 scale."""
-    hue_ij, saturation, brightness = hsb_channels(rgb)
+    hue_ij, saturation, brightness = hsb_channels(rgb, settings.moire_reduction_strength)
 
     hue_mask = threshold_channel(hue_ij, settings.hue)
     saturation_mask = threshold_channel(saturation, settings.saturation)
@@ -115,7 +141,12 @@ def _circular_hue_threshold(values: np.ndarray) -> HSBThreshold:
 
 
 def hsb_thresholds_from_region(
-    rgb: np.ndarray, x: int, y: int, width: int, height: int
+    rgb: np.ndarray,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    moire_reduction_strength: int = 0,
 ) -> tuple[HSBThreshold, HSBThreshold, HSBThreshold]:
     """Create HSB thresholds from all pixels inside an image rectangle."""
     image_height, image_width = rgb.shape[:2]
@@ -126,7 +157,7 @@ def hsb_thresholds_from_region(
     if right <= left or bottom <= top:
         raise ValueError("Pipette rectangle must cover at least one image pixel")
 
-    hue, saturation, brightness = hsb_channels(rgb[top:bottom, left:right])
+    hue, saturation, brightness = hsb_channels(rgb[top:bottom, left:right], moire_reduction_strength)
     return (
         _circular_hue_threshold(hue.reshape(-1)),
         HSBThreshold(int(saturation.min()), int(saturation.max()), False),
@@ -226,7 +257,8 @@ def _threshold_gray_range(gray: np.ndarray, low: int, high: int) -> np.ndarray:
 
 
 def detect_caterpillars(crop_rgb: np.ndarray, settings: ProcessingSettings) -> tuple[list[Particle], np.ndarray, str]:
-    gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+    preprocessed = reduce_moire_aliasing(crop_rgb, settings.moire_reduction_strength)
+    gray = cv2.cvtColor(preprocessed, cv2.COLOR_RGB2GRAY)
     attempts = [
         ("threshold_44_143_fill_holes", settings.caterpillar_threshold_high, 0, 0),
         ("threshold_44_143_erode2_dilate2", settings.caterpillar_threshold_high, 2, 2),
